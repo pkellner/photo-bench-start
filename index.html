@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+# photo-bench on any machine (ssh, RDP, a terminal at the desk), with nothing to paste. Type:
+#   curl -sL pkellner.github.io/pb | bash                 # quick profile
+#   curl -sL pkellner.github.io/pb | bash -s -- --profile full
+# It shows a short code; on your phone or laptop, signed in to GitHub, open github.com/login/device and type it. That
+# signs this machine in through the photo-bench GitHub App (README, "The GitHub App"): photo-bench only, write access to
+# its contents, expiring in 8 hours. Then it asks a name for the machine (Enter takes the one read from the hardware),
+# clones photo-bench (or updates the clone already there), and runs run.sh, which installs what is missing, measures and
+# posts the result. Any arguments go on to run.sh. In a clone, photo-bench/go.sh does the same.
+# Where: ~/repos/photo-bench when ~/repos exists, else ~/photo-bench. The login is never written to disk: git gets it on
+# its command line, the clone keeps the plain URL, and run.sh holds it in memory for the push at the end.
+# The same file is published as index.html of the public repo pkellner/pb (GitHub Pages); after changing it here, copy
+# it there (README, "The starter page").
+CLIENT_ID="${PHOTO_BENCH_CLIENT_ID:-Iv23_FILL_ME}"
+REPO="pkellner/photo-bench"
+
+main() {
+  set -euo pipefail
+  local here DIR name model chip gpus n product cpu code resp dev user_code uri interval T label url
+
+  here=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo "")
+  if [ -n "$here" ] && [ -f "$here/run.sh" ] && [ -d "$here/.git" ]; then DIR="$here"   # run as photo-bench/go.sh
+  elif [ -d "$HOME/repos" ]; then DIR="$HOME/repos/photo-bench"
+  else DIR="$HOME/photo-bench"; fi
+
+  command -v git >/dev/null 2>&1 || need_git
+
+  # sign in: GitHub's device flow for the photo-bench app
+  resp=$(curl -fsS -X POST -H "Accept: application/json" -d "client_id=$CLIENT_ID" https://github.com/login/device/code) \
+    || { echo "could not reach github.com"; exit 1; }
+  dev=$(field device_code "$resp"); user_code=$(field user_code "$resp"); uri=$(field verification_uri "$resp")
+  interval=$(num interval "$resp"); interval=${interval:-5}
+  [ -n "$dev" ] || { echo "GitHub refused the sign-in request: $resp"; exit 1; }
+  echo
+  echo "  On your phone or laptop, open   ${uri:-https://github.com/login/device}"
+  echo "  and type this code:             $user_code"
+  echo
+  printf "  waiting"
+  T=""
+  while [ -z "$T" ]; do
+    sleep "$interval"; printf "."
+    resp=$(curl -fsS -X POST -H "Accept: application/json" -d "client_id=$CLIENT_ID" -d "device_code=$dev" \
+           -d "grant_type=urn:ietf:params:oauth:grant-type:device_code" https://github.com/login/oauth/access_token || true)
+    T=$(field access_token "$resp")
+    case "$(field error "$resp")" in
+      ""|authorization_pending) ;;
+      slow_down) interval=$((interval + 5)) ;;
+      expired_token) echo; echo "  the code expired; run the command again"; exit 1 ;;
+      access_denied) echo; echo "  sign-in was cancelled"; exit 1 ;;
+      *) echo; echo "  sign-in failed: $resp"; exit 1 ;;
+    esac
+  done
+  echo " signed in"
+
+  # a name for the machine, from what it is (never its host name)
+  name=""
+  if [ "$(uname)" = Darwin ]; then
+    model=$(system_profiler SPHardwareDataType 2>/dev/null | awk -F': ' '/Model Name/ {print $2; exit}')
+    chip=$(sysctl -n machdep.cpu.brand_string 2>/dev/null | sed 's/^Apple //')
+    name=$(echo "$model $chip" | xargs)
+  elif command -v nvidia-smi >/dev/null 2>&1; then
+    gpus=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | sed 's/^NVIDIA //; s/GeForce //')
+    n=$(printf '%s\n' "$gpus" | grep -c . || true)
+    name=$(printf '%s\n' "$gpus" | head -1); [ "${n:-0}" -gt 1 ] && name="${n}x $name"
+  fi
+  if [ -z "$name" ] && [ "$(uname)" = Linux ]; then   # no NVIDIA card: the maker's model name and the CPU
+    product=$(sed -E 's/ (Notebook|Laptop|Desktop)( PC)?$//; s/To Be Filled.*|System Product Name|Default string//' \
+              /sys/class/dmi/id/product_name 2>/dev/null || true)
+    cpu=$(awk -F': ' '/^model name/ {print $2; exit}' /proc/cpuinfo 2>/dev/null \
+          | sed -E 's/\((R|TM)\)//g; s/ CPU//; s/ @.*//; s/[0-9]+th Gen //; s/ (with|w\/) Radeon.*//; s/ [0-9]+-Core Processor//' | xargs)
+    name=$(echo "$product${product:+, }$cpu" | xargs)
+  fi
+  name=${name:-$(uname -m) $(uname -s)}
+  read -r -p "  Name for this machine [$name]: " label
+  label=${label:-$name}
+
+  url="https://x-access-token:${T}@github.com/${REPO}.git"
+  export GIT_TERMINAL_PROMPT=0
+  if [ -d "$DIR/.git" ]; then
+    echo "== updating $DIR"
+    git -C "$DIR" -c credential.helper= pull --ff-only "$url" main
+  else
+    echo "== cloning into $DIR"
+    git -c credential.helper= clone "$url" "$DIR"
+  fi
+  git -C "$DIR" remote set-url origin "https://github.com/${REPO}.git"   # no login in the remote
+
+  PHOTO_BENCH_TOKEN="$T" exec "$DIR/run.sh" --label "$label" "$@"
+}
+
+field() { printf '%s' "$2" | sed -n "s/.*\"$1\":\"\([^\"]*\)\".*/\1/p"; }   # a string from GitHub's one-line JSON
+num()   { printf '%s' "$2" | sed -n "s/.*\"$1\":\([0-9]*\).*/\1/p"; }
+
+need_git() {   # git, from the machine's package manager (a Mac offers its own installer when git is first run)
+  local s=""; [ "$(id -u)" = 0 ] || s="sudo"
+  echo "== installing git"
+  if command -v apt-get >/dev/null 2>&1; then $s apt-get update -qq && $s apt-get install -y -qq git
+  elif command -v pacman >/dev/null 2>&1; then $s pacman -S --needed --noconfirm git
+  elif command -v dnf >/dev/null 2>&1; then $s dnf install -y -q git
+  else echo "no git and no package manager found"; exit 1; fi
+}
+
+# the whole file is read before anything runs (curl ... | bash), and the answers come from the keyboard
+main "$@" </dev/tty
