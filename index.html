@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # photo-bench on any machine (ssh, RDP, a terminal at the desk), with nothing to paste. Type:
-#   curl -sL pkellner.github.io/pb | bash                 # quick profile
-#   curl -sL pkellner.github.io/pb | bash -s -- --profile full
+#   curl -sL pkellner.github.io/photo-bench-start | bash                 # quick profile
+#   curl -sL pkellner.github.io/photo-bench-start | bash -s -- --profile full
 # It shows a short code; on your phone or laptop, signed in to GitHub, open github.com/login/device and type it. That
 # signs this machine in through the photo-bench GitHub App (README, "The GitHub App"): photo-bench only, write access to
 # its contents, expiring in 8 hours. Then it asks a name for the machine (Enter takes the one read from the hardware),
@@ -9,7 +9,7 @@
 # posts the result. Any arguments go on to run.sh. In a clone, photo-bench/go.sh does the same.
 # Where: ~/repos/photo-bench when ~/repos exists, else ~/photo-bench. The login is never written to disk: git gets it on
 # its command line, the clone keeps the plain URL, and run.sh holds it in memory for the push at the end.
-# The same file is published as index.html of the public repo pkellner/pb (GitHub Pages); after changing it here, copy
+# The same file is published as index.html of the public repo pkellner/photo-bench-start (GitHub Pages); after changing it here, copy
 # it there (README, "The starter page").
 CLIENT_ID="${PHOTO_BENCH_CLIENT_ID:-Iv23li0IwQf9aFzKCTpx}"
 REPO="pkellner/photo-bench"
